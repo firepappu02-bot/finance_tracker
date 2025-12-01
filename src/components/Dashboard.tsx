@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { TrendingUp, TrendingDown, Wallet, PiggyBank, ArrowUpRight, ArrowDownRight, AlertCircle, Repeat } from 'lucide-react';
+import { TrendingUp, TrendingDown, Wallet, PiggyBank, ArrowUpRight, ArrowDownRight, AlertCircle, Repeat, Eye, BarChart3, Target } from 'lucide-react';
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -35,6 +36,17 @@ interface BudgetAlert {
   percentage: number;
 }
 
+interface MonthlyTrendData {
+  month: string;
+  income: number;
+  expense: number;
+}
+
+interface CategorySpending {
+  name: string;
+  value: number;
+}
+
 export function Dashboard() {
   const { user } = useAuth();
   const [stats, setStats] = useState<DashboardStats>({
@@ -46,6 +58,8 @@ export function Dashboard() {
   const [recentTransactions, setRecentTransactions] = useState<RecentTransaction[]>([]);
   const [upcomingSubscriptions, setUpcomingSubscriptions] = useState<UpcomingSubscription[]>([]);
   const [budgetAlerts, setBudgetAlerts] = useState<BudgetAlert[]>([]);
+  const [monthlyTrend, setMonthlyTrend] = useState<MonthlyTrendData[]>([]);
+  const [categorySpending, setCategorySpending] = useState<CategorySpending[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -57,8 +71,9 @@ export function Dashboard() {
 
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, 1).toISOString();
 
-    const [accountsRes, transactionsRes, recentRes, subscriptionsRes, budgetsRes] = await Promise.all([
+    const [accountsRes, transactionsRes, recentRes, subscriptionsRes, budgetsRes, allTransactionsRes] = await Promise.all([
       supabase
         .from('accounts')
         .select('balance')
@@ -98,7 +113,13 @@ export function Dashboard() {
         .from('budgets')
         .select('id, name, amount, category_id, categories(name)')
         .eq('user_id', user.id)
-        .eq('is_active', true)
+        .eq('is_active', true),
+
+      supabase
+        .from('transactions')
+        .select('amount, type, transaction_date, categories(name)')
+        .eq('user_id', user.id)
+        .gte('transaction_date', sixMonthsAgo)
     ]);
 
     if (accountsRes.data) {
@@ -177,6 +198,46 @@ export function Dashboard() {
       setBudgetAlerts(alerts);
     }
 
+    if (allTransactionsRes.data) {
+      const monthlyData: Record<string, { income: number; expense: number }> = {};
+
+      allTransactionsRes.data.forEach((t: any) => {
+        const date = new Date(t.transaction_date);
+        const monthKey = date.toLocaleDateString('en-IN', { year: 'numeric', month: 'short' });
+
+        if (!monthlyData[monthKey]) {
+          monthlyData[monthKey] = { income: 0, expense: 0 };
+        }
+
+        if (t.type === 'income') {
+          monthlyData[monthKey].income += Number(t.amount);
+        } else {
+          monthlyData[monthKey].expense += Number(t.amount);
+        }
+      });
+
+      const trendArray = Object.entries(monthlyData)
+        .map(([month, data]) => ({ month, ...data }))
+        .sort((a, b) => new Date(a.month).getTime() - new Date(b.month).getTime());
+
+      setMonthlyTrend(trendArray);
+
+      const categorySpendingMap: Record<string, number> = {};
+      allTransactionsRes.data.forEach((t: any) => {
+        if (t.type === 'expense') {
+          const catName = t.categories?.name || 'Other';
+          categorySpendingMap[catName] = (categorySpendingMap[catName] || 0) + Number(t.amount);
+        }
+      });
+
+      const topCategories = Object.entries(categorySpendingMap)
+        .map(([name, value]) => ({ name, value }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 5);
+
+      setCategorySpending(topCategories);
+    }
+
     setLoading(false);
   };
 
@@ -194,6 +255,8 @@ export function Dashboard() {
       day: 'numeric',
     });
   };
+
+  const COLORS = ['#10b981', '#f59e0b', '#ef4444', '#3b82f6', '#8b5cf6'];
 
   if (loading) {
     return (
@@ -251,6 +314,65 @@ export function Dashboard() {
           </div>
           <div className="text-2xl font-bold text-gray-900">{stats.savingsRate.toFixed(1)}%</div>
           <div className="text-sm text-gray-600 mt-1">Savings Rate</div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+              <BarChart3 size={20} className="text-emerald-600" />
+              6-Month Spending Trend
+            </h3>
+          </div>
+          {monthlyTrend.length > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={monthlyTrend}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <XAxis dataKey="month" stroke="#6b7280" style={{ fontSize: '12px' }} />
+                <YAxis stroke="#6b7280" style={{ fontSize: '12px' }} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px' }}
+                  formatter={(value: any) => formatCurrency(value)}
+                />
+                <Bar dataKey="income" fill="#10b981" radius={[8, 8, 0, 0]} />
+                <Bar dataKey="expense" fill="#ef4444" radius={[8, 8, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-[300px] flex items-center justify-center text-gray-500">
+              No data available
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+              <Target size={20} className="text-blue-600" />
+              Spending by Category
+            </h3>
+          </div>
+          {categorySpending.length > 0 ? (
+            <div className="space-y-3">
+              {categorySpending.map((category, index) => (
+                <div key={category.name} className="flex items-center justify-between">
+                  <div className="flex items-center gap-3 flex-1">
+                    <div
+                      className="w-3 h-3 rounded-full"
+                      style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                    />
+                    <span className="text-sm font-medium text-gray-700">{category.name}</span>
+                  </div>
+                  <span className="font-semibold text-gray-900">{formatCurrency(category.value)}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="h-[300px] flex items-center justify-center text-gray-500">
+              No expense data available
+            </div>
+          )}
         </div>
       </div>
 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { User, Bell, Lock, Database } from 'lucide-react';
+import { User, Bell, Lock, Database, Eye, EyeOff, Shield, LogOut } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 
